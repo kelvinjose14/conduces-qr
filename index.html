@@ -1,0 +1,255 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex, nofollow" />
+    <meta name="referrer" content="no-referrer" />
+    <title>Conduce · Grupo Económico Torres Rodríguez</title>
+    <!--
+      Página del código QR del Sistema de Conduces (ADR-041). No guarda ni muestra datos: lee en ntfy.sh la dirección
+      actual de la oficina, comprueba que esté FIRMADA por la oficina (ECDSA P-256) y lleva al conduce (/v/<id>).
+      Los datos del QR van después de "#": el navegador no los envía a GitHub.
+      Fuente: kelvinjose14/sistema-conduces, carpeta pagina-qr/. Se publica en kelvinjose14/conduces-qr (GitHub Pages).
+    -->
+    <style>
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: grid;
+        place-items: center;
+        padding: 24px;
+        background: linear-gradient(160deg, #3a3fb0 0%, #2b2f8a 45%, #1d2066 100%);
+        color: #0f172a;
+        font:
+          16px/1.5 'Segoe UI',
+          system-ui,
+          -apple-system,
+          Roboto,
+          sans-serif;
+      }
+      main {
+        width: min(420px, 100%);
+        text-align: center;
+      }
+      .marca {
+        color: #fff;
+        margin-bottom: 20px;
+      }
+      .marca svg {
+        width: 84px;
+        height: auto;
+      }
+      .grupo {
+        margin: 8px 0 0;
+        font-size: 10px;
+        font-weight: 600;
+        letter-spacing: 0.42em;
+        color: #c7d2fe;
+      }
+      .empresa {
+        margin: 0;
+        font-weight: 700;
+      }
+      .tarjeta {
+        background: #fff;
+        border-radius: 18px;
+        padding: 28px 22px;
+        box-shadow: 0 20px 50px rgba(10, 12, 60, 0.35);
+      }
+      h1 {
+        margin: 14px 0 6px;
+        font-size: 19px;
+        color: #1f2266;
+      }
+      p {
+        margin: 0;
+        color: #475569;
+      }
+      .girando {
+        width: 40px;
+        height: 40px;
+        margin: 0 auto;
+        border-radius: 50%;
+        border: 4px solid #e0e7ff;
+        border-top-color: #2b2f8a;
+        animation: girar 0.9s linear infinite;
+      }
+      .girando[hidden],
+      button[hidden] {
+        display: none;
+      }
+      button {
+        margin-top: 18px;
+        height: 44px;
+        padding: 0 22px;
+        border: 0;
+        border-radius: 10px;
+        background: #2b2f8a;
+        color: #fff;
+        font: 600 15px/1 inherit;
+        font-family: inherit;
+      }
+      @keyframes girar {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <div class="marca">
+        <svg viewBox="0 0 120 80" aria-hidden="true">
+          <path d="M2 2h62v16H41v60H24V18H2z" fill="#fff" />
+          <path d="M48 26h17v52H48z" fill="#8cc63f" />
+          <path
+            d="M65 2h22c17 0 28 9 28 24 0 11-6 19-16 22l19 30H98L81 50H65V36h21c7 0 11-4 11-10s-4-10-11-10H65z"
+            fill="#fff"
+          />
+        </svg>
+        <p class="grupo">GRUPO ECONÓMICO</p>
+        <p class="empresa">TORRES RODRÍGUEZ</p>
+      </div>
+      <section class="tarjeta">
+        <div id="girando" class="girando" aria-hidden="true"></div>
+        <h1 id="titulo" role="status">Abriendo el conduce…</h1>
+        <p id="texto">Un momento.</p>
+        <button id="reintentar" type="button" hidden>Intentar de nuevo</button>
+      </section>
+    </main>
+    <script>
+      (function () {
+        var local = location.hostname === '127.0.0.1' || location.hostname === 'localhost';
+        var NTFY = local ? 'http://127.0.0.1:8099' : 'https://ntfy.sh';
+        var $ = function (id) {
+          return document.getElementById(id);
+        };
+
+        function mostrar(titulo, texto, esperando, reintentar) {
+          $('titulo').textContent = titulo;
+          $('texto').textContent = texto;
+          $('girando').hidden = !esperando;
+          $('reintentar').hidden = !reintentar;
+        }
+
+        var partes = location.hash.slice(1).split('.');
+        var corto = /^[A-Za-z0-9_-]{22}$/;
+        if (
+          partes.length !== 3 ||
+          !partes.every(function (p) {
+            return corto.test(p);
+          })
+        ) {
+          mostrar(
+            'Código QR no válido',
+            'Verifique que el código esté completo y sin daños.',
+            false,
+            false,
+          );
+          return;
+        }
+        var sitio = partes[0];
+        var nota = partes[1];
+        var token = partes[2];
+
+        function bytes(base64) {
+          var normal = base64.replace(/-/g, '+').replace(/_/g, '/');
+          while (normal.length % 4) normal += '=';
+          return Uint8Array.from(atob(normal), function (c) {
+            return c.charCodeAt(0);
+          });
+        }
+
+        async function huella(datos) {
+          var resumen = new Uint8Array(await crypto.subtle.digest('SHA-256', datos));
+          var texto = '';
+          resumen.forEach(function (b) {
+            texto += String.fromCharCode(b);
+          });
+          return btoa(texto)
+            .replace(/\+/g, '-')
+            .replace(/\//g, '_')
+            .replace(/=+$/, '')
+            .slice(0, 22);
+        }
+
+        // Solo vale la dirección firmada con la llave de la oficina (la del QR: su huella es el "sitio").
+        async function verificar(mensaje) {
+          if (
+            !mensaje ||
+            typeof mensaje.u !== 'string' ||
+            typeof mensaje.k !== 'string' ||
+            typeof mensaje.f !== 'string'
+          )
+            return null;
+          var clave = bytes(mensaje.k);
+          if ((await huella(clave)) !== sitio) return null;
+          var llave = await crypto.subtle.importKey(
+            'spki',
+            clave,
+            { name: 'ECDSA', namedCurve: 'P-256' },
+            false,
+            ['verify'],
+          );
+          var valida = await crypto.subtle.verify(
+            { name: 'ECDSA', hash: 'SHA-256' },
+            llave,
+            bytes(mensaje.f),
+            new TextEncoder().encode(mensaje.u),
+          );
+          if (!valida) return null;
+          var url = new URL(mensaje.u);
+          if (!local && !(url.protocol === 'https:' && /\.trycloudflare\.com$/.test(url.hostname)))
+            return null;
+          return url.origin;
+        }
+
+        async function abrir() {
+          mostrar('Abriendo el conduce…', 'Un momento.', true, false);
+          try {
+            var respuesta = await fetch(NTFY + '/conduces-qr-' + sitio + '/json?poll=1&since=12h', {
+              cache: 'no-store',
+            });
+            var lineas = (await respuesta.text()).split('\n').filter(Boolean).reverse();
+            for (var i = 0; i < lineas.length; i++) {
+              var mensaje = null;
+              try {
+                var evento = JSON.parse(lineas[i]);
+                if (evento.event === 'message') mensaje = JSON.parse(evento.message);
+              } catch (e) {
+                mensaje = null;
+              }
+              var origen = await verificar(mensaje).catch(function () {
+                return null;
+              });
+              if (origen) {
+                location.replace(origen + '/v/' + nota + '?t=' + token);
+                return;
+              }
+            }
+            mostrar(
+              'La oficina no está disponible ahora',
+              'El sistema de la oficina está apagado o sin internet. Intente de nuevo en unos minutos.',
+              false,
+              true,
+            );
+          } catch (e) {
+            mostrar(
+              'Sin conexión',
+              'Revise que el celular tenga internet e intente de nuevo.',
+              false,
+              true,
+            );
+          }
+        }
+
+        $('reintentar').addEventListener('click', abrir);
+        abrir();
+      })();
+    </script>
+  </body>
+</html>
